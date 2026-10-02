@@ -392,10 +392,12 @@ function streamOptions(streamData) {
   const add = (source, kind = 'MP4') => {
     if (!source) return;
     const item = typeof source === 'string' ? { url: source } : source;
-    const url = item.playback_url || item.url || item.src || item.playUrl || item.play_url;
+    // Browsers can play the signed CDN MP4 directly without CORS access. This
+    // avoids Render's outbound proxy IP being rejected by some CDN edges.
+    const url = item.url || item.src || item.playUrl || item.play_url || item.playback_url;
     if (!url || sources.some((existing) => existing.url === url)) return;
     const nestedAudio = item.audio || item.audioTrack || {};
-    sources.push({ url, kind: item.format || item.type || kind, resolution: item.resolution || item.resolutions || item.quality || '', language: item.language || item.lang || item.audioLanguage || item.audio_lang || item.languageName || nestedAudio.language || nestedAudio.lang || '' });
+    sources.push({ url, fallbackUrl: item.playback_url && item.playback_url !== url ? item.playback_url : '', kind: item.format || item.type || kind, resolution: item.resolution || item.resolutions || item.quality || '', language: item.language || item.lang || item.audioLanguage || item.audio_lang || item.languageName || nestedAudio.language || nestedAudio.lang || '' });
   };
   (streamData.sources || []).forEach((source) => add(source, 'MP4'));
   (streamData.hls || []).forEach((source) => add(source, 'HLS'));
@@ -520,6 +522,14 @@ function setupPlayer(streamData, captionsData, item, subjectId, slug, se, ep) {
   video.addEventListener('playing', () => frame.classList.remove('is-loading'));
   video.addEventListener('error', () => {
     frame.classList.remove('is-loading');
+    const current = sources[currentIndex];
+    if (current?.fallbackUrl && current.url !== current.fallbackUrl) {
+      current.url = current.fallbackUrl;
+      current.fallbackUrl = '';
+      note.textContent = 'Direct playback was blocked. Trying the Reelbox media proxy…';
+      switchSource(currentIndex, true);
+      return;
+    }
     failedSources.add(currentIndex);
     const fallbackIndex = [...sources.keys()].find((index) => !failedSources.has(index));
     if (fallbackIndex !== undefined) {
