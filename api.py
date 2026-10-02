@@ -364,30 +364,32 @@ async def proxy_media(subject_id: str, se: int, ep: int, source_index: int, requ
     if source_index < 0 or source_index >= len(streams) or not streams[source_index].get("url"):
         raise HTTPException(status_code=404, detail="Media source unavailable")
 
+    # CDN media edges accept the stable player origin, not the browser-facing
+    # Render URL or the internal SPA page URL. Keep the media request simple.
     dom_data = await _make_request(f"{API_BASE}/media-player/get-domain")
     domain = dom_data.get("data", "https://netfilm.world").rstrip("/")
-    player_referer = f"{domain}/spa/videoPlayPage/movies/{detail_path}?id={subject_id}&type=/movie/detail&detailSe={se}&detailEp={ep}&lang=en"
-    forward_headers = {
-        "User-Agent": PLAYER_HEADERS["User-Agent"],
-        "Accept": "*/*",
-        "Referer": player_referer,
-    }
-    if request.headers.get("range"):
-        forward_headers["Range"] = request.headers["range"]
-
+    range_header = request.headers.get("range")
     client = await _get_http_client()
     media_url = streams[source_index]["url"]
-    upstream_request = client.build_request("GET", media_url, headers=forward_headers)
-    upstream = await client.send(upstream_request, stream=True)
-    if upstream.status_code == 426:
-        await upstream.aread()
-        await upstream.aclose()
-        # Some CDN edges reject the player-page referer; retry with the stable
-        # media origin referer that also works for direct browser range requests.
-        retry_headers = {"User-Agent": PLAYER_HEADERS["User-Agent"], "Accept": "*/*", "Referer": f"{domain}/"}
-        if request.headers.get("range"):
-            retry_headers["Range"] = request.headers["range"]
-        upstream = await client.send(client.build_request("GET", media_url, headers=retry_headers), stream=True)
+    upstream = None
+    # Try the known-good CDN origin first, then the API-provided domain, while
+    # preserving Range for seeking and progressive playback.
+    for referer in ("https://netfilm.world/", f"{domain}/", "https://moviebox.ph/"):
+        headers = {
+            "User-Agent": PLAYER_HEADERS["User-Agent"],
+            "Accept": "*/*",
+            "Referer": referer,
+        }
+        if range_header:
+            headers["Range"] = range_header
+        attempt = await client.send(client.build_request("GET", media_url, headers=headers), stream=True)
+        if attempt.status_code < 400:
+            upstream = attempt
+            break
+        await attempt.aread()
+        await attempt.aclose()
+    if upstream is None:
+        upstream = attempt
     if upstream.status_code >= 400:
         await upstream.aread()
         await upstream.aclose()

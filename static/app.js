@@ -392,12 +392,13 @@ function streamOptions(streamData) {
   const add = (source, kind = 'MP4') => {
     if (!source) return;
     const item = typeof source === 'string' ? { url: source } : source;
-    // Browsers can play the signed CDN MP4 directly without CORS access. This
-    // avoids Render's outbound proxy IP being rejected by some CDN edges.
-    const url = item.url || item.src || item.playUrl || item.play_url || item.playback_url;
+    // Use the same-origin proxy first so the CDN receives the accepted player
+    // referer; keep the signed URL as a browser fallback for other CDN edges.
+    const directUrl = item.url || item.src || item.playUrl || item.play_url;
+    const url = item.playback_url || directUrl;
     if (!url || sources.some((existing) => existing.url === url)) return;
     const nestedAudio = item.audio || item.audioTrack || {};
-    sources.push({ url, fallbackUrl: item.playback_url && item.playback_url !== url ? item.playback_url : '', kind: item.format || item.type || kind, resolution: item.resolution || item.resolutions || item.quality || '', language: item.language || item.lang || item.audioLanguage || item.audio_lang || item.languageName || nestedAudio.language || nestedAudio.lang || '' });
+    sources.push({ url, fallbackUrl: directUrl && directUrl !== url ? directUrl : '', kind: item.format || item.type || kind, resolution: item.resolution || item.resolutions || item.quality || '', language: item.language || item.lang || item.audioLanguage || item.audio_lang || item.languageName || nestedAudio.language || nestedAudio.lang || '' });
   };
   (streamData.sources || []).forEach((source) => add(source, 'MP4'));
   (streamData.hls || []).forEach((source) => add(source, 'HLS'));
