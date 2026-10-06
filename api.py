@@ -370,7 +370,9 @@ async def proxy_media(subject_id: str, se: int, ep: int, source_index: int, requ
     forward_headers = {
         "User-Agent": PLAYER_HEADERS["User-Agent"],
         "Accept": "*/*",
+        "Accept-Language": PLAYER_HEADERS["Accept-Language"],
         "Referer": player_referer,
+        "Origin": domain,
     }
     if request.headers.get("range"):
         forward_headers["Range"] = request.headers["range"]
@@ -384,7 +386,13 @@ async def proxy_media(subject_id: str, se: int, ep: int, source_index: int, requ
         await upstream.aclose()
         # Some CDN edges reject the player-page referer; retry with the stable
         # media origin referer that also works for direct browser range requests.
-        retry_headers = {"User-Agent": PLAYER_HEADERS["User-Agent"], "Accept": "*/*", "Referer": f"{domain}/"}
+        retry_headers = {
+            "User-Agent": PLAYER_HEADERS["User-Agent"],
+            "Accept": "*/*",
+            "Accept-Language": PLAYER_HEADERS["Accept-Language"],
+            "Referer": f"{domain}/",
+            "Origin": domain,
+        }
         if request.headers.get("range"):
             retry_headers["Range"] = request.headers["range"]
         upstream = await client.send(client.build_request("GET", media_url, headers=retry_headers), stream=True)
