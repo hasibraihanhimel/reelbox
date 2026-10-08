@@ -114,8 +114,15 @@ async function request(path, { ttl = 0, cacheKey = path, signal } = {}) {
   const timeout = window.setTimeout(() => controller.abort(), 15_000);
   const promise = fetch(path, { signal: controller.signal, headers: { Accept: 'application/json' } })
     .then(async (response) => {
-      if (!response.ok) throw new Error(`Request failed (${response.status})`);
-      return response.json();
+      const text = await response.text();
+      let data = null;
+      try {
+        data = text ? JSON.parse(text) : {};
+      } catch {
+        throw new Error(response.ok ? 'The server returned an invalid response. Please try again.' : `Request failed (${response.status})`);
+      }
+      if (!response.ok) throw new Error(data?.detail || `Request failed (${response.status})`);
+      return data || {};
     })
     .then((data) => {
       state.cache.set(cacheKey, { time: Date.now(), data });
@@ -415,7 +422,7 @@ function captionOptions(data) {
 }
 
 function playerTemplate(item, subjectId, slug, se, ep, episodes = []) {
-  return `<section class="watch-shell"><a class="back-link" href="${slug ? `/title/${encodePath(slug)}` : '/'}" data-link>← Back to details</a><div class="player-wrap"><div class="video-frame is-loading" id="video-frame"><video id="watch-video" playsinline preload="metadata"></video><div class="player-overlay"><div class="loading-player">Finding the fastest available stream…</div></div><div class="controls"><input class="progress" id="video-progress" type="range" min="0" max="100" value="0" step="0.1" aria-label="Video progress"><button class="control-button" id="play-toggle" type="button" aria-label="Play or pause">▶</button><button class="control-button" id="skip-back" type="button" aria-label="Back 10 seconds">↶</button><span class="time-label" id="time-label">00:00 / 00:00</span><select class="player-select" id="quality-select" aria-label="Video quality"><option>Quality</option></select><select class="player-select" id="caption-select" aria-label="Subtitles"><option>Subtitles</option></select><select class="player-select" id="audio-select" aria-label="Audio language"><option>Audio · source default</option></select><button class="control-button" id="mute-toggle" type="button" aria-label="Mute">⌕</button><button class="control-button" id="pip-toggle" type="button" aria-label="Picture in picture">▣</button><button class="control-button" id="fullscreen-toggle" type="button" aria-label="Fullscreen">⛶</button></div></div></div><div class="player-meta"><div><p class="eyebrow">Now screening</p><h1>${escapeHtml(item.name || 'Untitled')}</h1><p class="player-note" id="player-note">Loading playback options…</p></div><div class="episode-panel-inline">${seasonOptions(episodes, se)}<div class="episode-tools" id="episode-tools" data-subject-id="${escapeHtml(subjectId)}" data-slug="${escapeHtml(slug)}" data-active-ep="${ep}">${episodeButtons(episodes, se, subjectId, slug, ep)}</div></div></div></section>`;
+  return `<section class="watch-shell"><a class="back-link" href="${slug ? `/title/${encodePath(slug)}` : '/'}" data-link>← Back to details</a><div class="player-wrap"><div class="video-frame is-loading" id="video-frame"><video id="watch-video" playsinline preload="auto"></video><div class="player-overlay"><div class="loading-player">Finding the fastest available stream…</div><div class="player-ad-gate" id="player-ad-gate"><p class="ad-gate-kicker">One quick step before watching</p><strong>Click here, wait 3 seconds, then come back to watch.</strong><a class="button ad-gate-button" id="player-ad-gate-button" href="https://www.profitableratecpmnetwork.com/c6z5z5di?key=c69074fbf2990ba792cfbf352a8e12ff" target="_blank" rel="noopener noreferrer">Click now</a><small id="player-ad-gate-status">The video will start automatically after you return.</small></div></div><div class="controls"><input class="progress" id="video-progress" type="range" min="0" max="100" value="0" step="0.1" aria-label="Video progress"><button class="control-button" id="play-toggle" type="button" aria-label="Play or pause">▶</button><button class="control-button" id="skip-back" type="button" aria-label="Back 10 seconds">↶</button><span class="time-label" id="time-label">00:00 / 00:00</span><select class="player-select" id="quality-select" aria-label="Video quality"><option>Quality</option></select><select class="player-select" id="caption-select" aria-label="Subtitles"><option>Subtitles</option></select><select class="player-select" id="audio-select" aria-label="Audio language"><option>Audio · source default</option></select><button class="control-button" id="mute-toggle" type="button" aria-label="Mute">⌕</button><button class="control-button" id="pip-toggle" type="button" aria-label="Picture in picture">▣</button><button class="control-button" id="fullscreen-toggle" type="button" aria-label="Fullscreen">⛶</button></div></div></div><div class="player-meta"><div><p class="eyebrow">Now screening</p><h1>${escapeHtml(item.name || 'Untitled')}</h1><p class="player-note" id="player-note">Loading playback options…</p></div><div class="episode-panel-inline">${seasonOptions(episodes, se)}<div class="episode-tools" id="episode-tools" data-subject-id="${escapeHtml(subjectId)}" data-slug="${escapeHtml(slug)}" data-active-ep="${ep}">${episodeButtons(episodes, se, subjectId, slug, ep)}</div></div></div></section>`;
 }
 
 function setSelectOptions(select, options, placeholder) {
@@ -427,13 +434,20 @@ function setSelectOptions(select, options, placeholder) {
 function setupPlayer(streamData, captionsData, item, subjectId, slug, se, ep) {
   const video = document.querySelector('#watch-video');
   const frame = document.querySelector('#video-frame');
+  const playerWrap = document.querySelector('.player-wrap');
   const progress = document.querySelector('#video-progress');
   const playToggle = document.querySelector('#play-toggle');
   const timeLabel = document.querySelector('#time-label');
   const quality = document.querySelector('#quality-select');
   const caption = document.querySelector('#caption-select');
   const audio = document.querySelector('#audio-select');
+  const muteToggle = document.querySelector('#mute-toggle');
+  const pipToggle = document.querySelector('#pip-toggle');
+  const fullscreenToggle = document.querySelector('#fullscreen-toggle');
   const note = document.querySelector('#player-note');
+  const adGate = document.querySelector('#player-ad-gate');
+  const adGateButton = document.querySelector('#player-ad-gate-button');
+  const adGateStatus = document.querySelector('#player-ad-gate-status');
   const sources = streamOptions(streamData);
   const captionList = captionOptions(captionsData);
   const declaredAudio = Array.isArray(streamData.audio) ? streamData.audio : Array.isArray(streamData.audio_tracks) ? streamData.audio_tracks : [];
@@ -452,24 +466,95 @@ function setupPlayer(streamData, captionsData, item, subjectId, slug, se, ep) {
       ? '<span class="coming-soon-badge">Coming soon</span> This title has not been uploaded for streaming yet.'
       : escapeHtml(streamData.note || 'No playable stream was returned for this episode.');
     notify(comingSoon ? 'This title is coming soon.' : 'No playable source is available.', comingSoon ? 'info' : 'error');
+    adGate.hidden = true;
     state.player = { video, sources: [], item };
     return;
   }
   note.textContent = `${sources.length} quality option${sources.length === 1 ? '' : 's'} available · subtitles and audio depend on the source`;
-  let currentIndex = 0;
+
+  const playbackKey = `${slug || subjectId}:${se}:${ep}`;
+  const qualityKey = (source) => `${source?.resolution || 'auto'}|${source?.kind || ''}`.toLowerCase();
+  const readPlayback = (key = playbackKey) => {
+    try {
+      const value = JSON.parse(localStorage.getItem(`reelbox:playback:${key}`) || 'null');
+      return value && typeof value === 'object' ? value : null;
+    } catch { return null; }
+  };
+  const writePlayback = (data, key = playbackKey) => {
+    try { localStorage.setItem(`reelbox:playback:${key}`, JSON.stringify({ ...data, savedAt: Date.now() })); } catch { /* storage is optional */ }
+  };
+  const readPendingPlayback = () => {
+    try {
+      const value = JSON.parse(sessionStorage.getItem('reelbox:pending-playback') || 'null');
+      if (value?.se === se && value?.ep === ep) {
+        sessionStorage.removeItem('reelbox:pending-playback');
+        return value;
+      }
+    } catch { /* storage is optional */ }
+    return null;
+  };
+  const savedPlayback = readPendingPlayback() || readPlayback() || {};
+  let currentIndex = sources.findIndex((source) => qualityKey(source) === savedPlayback.quality);
+  // Start new sessions on the lightest source to reduce mobile buffering; restore the saved quality when available.
+  if (currentIndex < 0) currentIndex = sources.length - 1;
+  const initialTime = Number.isFinite(Number(savedPlayback.currentTime)) ? Math.max(0, Number(savedPlayback.currentTime)) : 0;
   const failedSources = new Set();
   let activeTrack = null;
   let timeUpdateFrame = 0;
+  let lastSavedAt = 0;
+  let initialLoad = true;
+  let userSetMute = savedPlayback.mutedByUser === true;
+  let adUnlocked = false;
+
+  const persistPlayback = () => {
+    const now = Date.now();
+    if (now - lastSavedAt < 1500 && !video.paused) return;
+    lastSavedAt = now;
+    writePlayback({ currentTime: video.currentTime || 0, quality: qualityKey(sources[currentIndex]), muted: video.muted, mutedByUser: userSetMute, se, ep });
+  };
   const syncTime = () => {
     timeUpdateFrame = 0;
     progress.value = video.duration ? String((video.currentTime / video.duration) * 100) : '0';
     timeLabel.textContent = `${formatTime(video.currentTime)} / ${formatTime(video.duration)}`;
   };
+  const attemptPlay = () => video.play().catch(() => {
+    // Browsers may block unmuted autoplay. Keep autoplay running silently, then restore sound on the first gesture.
+    video.muted = true;
+    muteToggle.textContent = '🔇';
+    note.textContent = 'Playing automatically. Tap the video once to enable sound.';
+    return video.play().catch(() => {
+      note.textContent = 'Autoplay was blocked by the browser. Tap the video once to start.';
+    });
+  });
+  const checkAdGate = () => {
+    let clickedAt = 0;
+    try { clickedAt = Number(sessionStorage.getItem('reelbox:smart-link-clicked') || 0); } catch { /* storage is optional */ }
+    if (!clickedAt) return;
+    const remaining = 3000 - (Date.now() - clickedAt);
+    if (remaining > 0) {
+      adGateStatus.textContent = `Please wait ${Math.ceil(remaining / 1000)} seconds, then return to watch.`;
+      window.setTimeout(checkAdGate, remaining + 50);
+      return;
+    }
+    adUnlocked = true;
+    adGate.hidden = true;
+    try { sessionStorage.removeItem('reelbox:smart-link-clicked'); } catch { /* storage is optional */ }
+    note.textContent = 'Playback unlocked. Starting video…';
+    attemptPlay();
+  };
+  adGateButton.addEventListener('click', () => {
+    try { sessionStorage.setItem('reelbox:smart-link-clicked', String(Date.now())); } catch { /* storage is optional */ }
+    adGateStatus.textContent = 'Please wait 3 seconds, then return to watch.';
+    window.setTimeout(checkAdGate, 3050);
+  });
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) checkAdGate(); });
+  window.addEventListener('pageshow', checkAdGate);
   const switchSource = async (index, preserveTime = true) => {
     const next = sources[index];
     if (!next) return;
-    const currentTime = preserveTime ? video.currentTime : 0;
-    const wasPlaying = !video.paused;
+    persistPlayback();
+    const currentTime = preserveTime ? video.currentTime : (initialLoad ? initialTime : 0);
+    const shouldPlay = adUnlocked && (initialLoad || !video.paused);
     currentIndex = index;
     failedSources.delete(index);
     frame.classList.add('is-loading');
@@ -478,7 +563,9 @@ function setupPlayer(streamData, captionsData, item, subjectId, slug, se, ep) {
     video.addEventListener('loadedmetadata', () => {
       if (Number.isFinite(currentTime) && currentTime > 0) video.currentTime = Math.min(currentTime, video.duration || currentTime);
       frame.classList.remove('is-loading');
-      if (wasPlaying) video.play().catch(() => notify('Press play to resume this source.'));
+      if (shouldPlay) attemptPlay();
+      initialLoad = false;
+      persistPlayback();
     }, { once: true });
     quality.value = String(index);
   };
@@ -495,29 +582,38 @@ function setupPlayer(streamData, captionsData, item, subjectId, slug, se, ep) {
     video.append(activeTrack);
     activeTrack.addEventListener('load', () => { if (activeTrack?.track) activeTrack.track.mode = 'showing'; });
   };
-  quality.addEventListener('change', () => switchSource(Number(quality.value)));
+  const updateFullscreenButton = () => {
+    const active = Boolean(document.fullscreenElement || document.webkitFullscreenElement);
+    fullscreenToggle.textContent = active ? '⛶' : '⛶';
+    fullscreenToggle.setAttribute('aria-label', active ? 'Exit fullscreen' : 'Fullscreen');
+    fullscreenToggle.title = active ? 'Exit fullscreen' : 'Fullscreen';
+  };
+  quality.addEventListener('change', () => { switchSource(Number(quality.value)); persistPlayback(); });
   caption.addEventListener('change', () => setCaption(Number(caption.value)));
   audio.addEventListener('change', () => {
     const selected = audioList[Number(audio.value)];
     if (!selected) return;
+    persistPlayback();
     if (selected.subjectId && selected.slug) {
+      try {
+        sessionStorage.setItem('reelbox:pending-playback', JSON.stringify({ currentTime: video.currentTime || 0, quality: qualityKey(sources[currentIndex]), muted: userSetMute ? video.muted : false, mutedByUser: userSetMute, se, ep }));
+      } catch { /* storage is optional */ }
       navigate(`/watch/${encodePath(selected.subjectId)}?slug=${encodeURIComponent(selected.slug)}&se=${se}&ep=${ep}`);
       return;
     }
     const index = sources.findIndex((source) => source.language === selected.language);
     if (index >= 0) switchSource(index);
-    else if (video.audioTracks) {
-      [...video.audioTracks].forEach((track) => { track.enabled = track.language === selected.language; });
-    }
+    else if (video.audioTracks) [...video.audioTracks].forEach((track) => { track.enabled = track.language === selected.language; });
   });
-  const togglePlay = () => video.paused ? video.play().catch(() => notify('This source needs a tap to start.')) : video.pause();
+  const togglePlay = () => video.paused ? attemptPlay() : video.pause();
   playToggle.addEventListener('click', togglePlay);
   video.addEventListener('play', () => { playToggle.textContent = '❚❚'; playToggle.setAttribute('aria-label', 'Pause'); });
-  video.addEventListener('pause', () => { playToggle.textContent = '▶'; playToggle.setAttribute('aria-label', 'Play'); });
-  video.addEventListener('timeupdate', () => { if (!timeUpdateFrame) timeUpdateFrame = requestAnimationFrame(syncTime); });
+  video.addEventListener('pause', () => { playToggle.textContent = '▶'; playToggle.setAttribute('aria-label', 'Play'); persistPlayback(); });
+  video.addEventListener('timeupdate', () => { if (!timeUpdateFrame) timeUpdateFrame = requestAnimationFrame(syncTime); persistPlayback(); });
   video.addEventListener('loadedmetadata', () => { frame.classList.remove('is-loading'); timeLabel.textContent = `${formatTime(video.currentTime)} / ${formatTime(video.duration)}`; });
   video.addEventListener('waiting', () => frame.classList.add('is-loading'));
   video.addEventListener('playing', () => frame.classList.remove('is-loading'));
+  video.addEventListener('ended', persistPlayback);
   video.addEventListener('error', () => {
     frame.classList.remove('is-loading');
     failedSources.add(currentIndex);
@@ -530,13 +626,41 @@ function setupPlayer(streamData, captionsData, item, subjectId, slug, se, ep) {
     note.textContent = 'None of the available sources could be played. Try another title or episode.';
     notify('Playback failed for every available source.', 'error');
   });
-  progress.addEventListener('input', () => { if (video.duration) video.currentTime = (Number(progress.value) / 100) * video.duration; });
-  document.querySelector('#skip-back').addEventListener('click', () => { video.currentTime = Math.max(0, video.currentTime - 10); });
-  document.querySelector('#mute-toggle').addEventListener('click', (event) => { video.muted = !video.muted; event.currentTarget.textContent = video.muted ? '🔇' : '⌕'; });
-  document.querySelector('#pip-toggle').addEventListener('click', async () => { try { if (document.pictureInPictureElement) await document.exitPictureInPicture(); else if (document.pictureInPictureEnabled) await video.requestPictureInPicture(); } catch { notify('Picture-in-picture is not available in this browser.'); } });
-  document.querySelector('#fullscreen-toggle').addEventListener('click', async () => { try { if (document.fullscreenElement) await document.exitFullscreen(); else await document.querySelector('.player-wrap').requestFullscreen(); } catch { notify('Fullscreen is not available in this browser.'); } });
-  state.player = { video, sources, item, currentIndex, switchSource };
-  switchSource(Math.max(0, sources.length - 1), false);
+  progress.addEventListener('input', () => { if (video.duration) { video.currentTime = (Number(progress.value) / 100) * video.duration; persistPlayback(); } });
+  document.querySelector('#skip-back').addEventListener('click', () => { video.currentTime = Math.max(0, video.currentTime - 10); persistPlayback(); });
+  muteToggle.addEventListener('click', () => { userSetMute = true; video.muted = !video.muted; muteToggle.textContent = video.muted ? '🔇' : '⌕'; persistPlayback(); });
+  const enableSoundAfterGesture = () => {
+    if (!adUnlocked || !video.muted) return;
+    userSetMute = true;
+    video.muted = false;
+    muteToggle.textContent = '⌕';
+    note.textContent = 'Sound enabled.';
+    attemptPlay();
+    persistPlayback();
+  };
+  playerWrap.addEventListener('pointerdown', enableSoundAfterGesture);
+  pipToggle.addEventListener('click', async () => { try { if (document.pictureInPictureElement) await document.exitPictureInPicture(); else if (document.pictureInPictureEnabled) await video.requestPictureInPicture(); } catch { notify('Picture-in-picture is not available in this browser.'); } });
+  fullscreenToggle.addEventListener('click', async () => {
+    try {
+      if (document.fullscreenElement && document.exitFullscreen) await document.exitFullscreen();
+      else if (document.webkitFullscreenElement && document.webkitExitFullscreen) document.webkitExitFullscreen();
+      else if (playerWrap.requestFullscreen) await playerWrap.requestFullscreen();
+      else if (playerWrap.webkitRequestFullscreen) playerWrap.webkitRequestFullscreen();
+      else if (video.webkitEnterFullscreen) video.webkitEnterFullscreen();
+      else notify('Fullscreen is not available in this browser.');
+    } catch { notify('Fullscreen is not available in this browser.'); }
+  });
+  document.addEventListener('fullscreenchange', updateFullscreenButton);
+  document.addEventListener('webkitfullscreenchange', updateFullscreenButton);
+  window.addEventListener('pagehide', persistPlayback, { once: true });
+  document.addEventListener('visibilitychange', () => { if (document.hidden) persistPlayback(); }, { once: true });
+  // Do not force old autoplay fallback state on the next visit; only an explicit user mute is restored.
+  video.muted = savedPlayback.mutedByUser === true && savedPlayback.muted === true;
+  muteToggle.textContent = video.muted ? '🔇' : '⌕';
+  state.player = { video, sources, item, currentIndex, switchSource, persistPlayback };
+  adGate.hidden = false;
+  checkAdGate();
+  switchSource(currentIndex, false);
 }
 
 async function renderWatch(subjectId, params, routeId) {
@@ -604,7 +728,15 @@ async function renderRoute() {
   view.innerHTML = `<div class="empty-state"><div><h2>That page moved.</h2><p>Return to the room and choose another title.</p><a class="button" href="/" data-link>Go home</a></div></div>`;
 }
 
+function hideSuggestions() {
+  window.clearTimeout(state.suggestionTimer);
+  state.suggestionAbortController?.abort();
+  state.suggestionAbortController = null;
+  suggestions.hidden = true;
+  suggestions.innerHTML = '';
+}
 function navigate(url) {
+  hideSuggestions();
   if (url === location.pathname + location.search) return;
   history.pushState({}, '', url);
   renderRoute();
@@ -626,7 +758,7 @@ document.addEventListener('click', (event) => {
 searchForm.addEventListener('submit', (event) => {
   event.preventDefault();
   const query = searchInput.value.trim();
-  suggestions.hidden = true;
+  hideSuggestions();
   if (query) navigate(`/search?q=${encodeURIComponent(query)}`);
 });
 
@@ -635,7 +767,7 @@ searchInput.addEventListener('input', () => {
   window.clearTimeout(state.suggestionTimer);
   state.suggestionAbortController?.abort();
   state.suggestionAbortController = null;
-  if (query.length < 2) { suggestions.hidden = true; return; }
+  if (query.length < 2) { hideSuggestions(); return; }
   state.suggestionTimer = window.setTimeout(async () => {
     const requestId = ++state.suggestionRequest;
     state.suggestionAbortController = new AbortController();
