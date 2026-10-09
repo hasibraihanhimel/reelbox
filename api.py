@@ -138,14 +138,14 @@ async def _make_request(url: str, method: str = "GET", payload: dict = None, cus
     try:
         resp = None
         transient_statuses = {408, 425, 429, 500, 502, 503, 504}
-        for attempt in range(3):
+        for attempt in range(5):
             try:
                 if method == "POST":
                     resp = await client.post(url, headers=headers, json=payload)
                 else:
                     resp = await client.get(url, headers=headers)
             except httpx.HTTPError:
-                if attempt >= 2:
+                if attempt >= 4:
                     raise
                 await asyncio.sleep(0.35 * (attempt + 1))
                 continue
@@ -378,9 +378,9 @@ async def proxy_media(subject_id: str, se: int, ep: int, source_index: int, requ
     upstream = None
     last_status = None
 
-    for attempt in range(3):
+    for attempt in range(5):
         # Refresh player data on the final attempt so a newly signed CDN URL is used.
-        if attempt == 2:
+        if attempt == 4:
             _player_cache.pop(cache_key, None)
         data = await _get_player_data(subject_id, detail_path, se, ep)
         streams = data.get("streams", [])
@@ -410,7 +410,7 @@ async def proxy_media(subject_id: str, se: int, ep: int, source_index: int, requ
             upstream = await client.send(client.build_request("GET", media_url, headers=forward_headers), stream=True)
         except httpx.HTTPError as error:
             last_status = str(error)
-            if attempt < 2:
+            if attempt < 4:
                 await asyncio.sleep(0.35 * (attempt + 1))
                 continue
             raise HTTPException(status_code=502, detail="Media source connection failed after retries") from error
@@ -421,7 +421,7 @@ async def proxy_media(subject_id: str, se: int, ep: int, source_index: int, requ
             await upstream.aread()
             await upstream.aclose()
             upstream = None
-            if attempt < 2:
+            if attempt < 4:
                 await asyncio.sleep(0.35 * (attempt + 1))
                 continue
         if upstream.status_code >= 400:
