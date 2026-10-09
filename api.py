@@ -334,6 +334,7 @@ async def get_stream_sources(subject_id: str, detail_path: str, se: int = 1, ep:
             "resolution": f"{s.get('resolutions')}p",
             "format": s.get("format"),
             "url": s.get("url"),
+            "direct_url": s.get("url"),
             "playback_url": f"/api/media/{subject_id}/{se}/{ep}/{index}?detail_path={quote(detail_path)}" if s.get("url") else "",
             "size": s.get("size"),
             "duration": s.get("duration"),
@@ -370,9 +371,12 @@ async def proxy_media(subject_id: str, se: int, ep: int, source_index: int, requ
     forward_headers = {
         "User-Agent": PLAYER_HEADERS["User-Agent"],
         "Accept": "*/*",
-        "Accept-Language": PLAYER_HEADERS["Accept-Language"],
-        "Referer": player_referer,
+        "Accept-Encoding": "identity",
         "Origin": domain,
+        "Referer": player_referer,
+        "Sec-Fetch-Dest": "video",
+        "Sec-Fetch-Mode": "cors",
+        "Sec-Fetch-Site": "cross-site",
     }
     if request.headers.get("range"):
         forward_headers["Range"] = request.headers["range"]
@@ -389,9 +393,12 @@ async def proxy_media(subject_id: str, se: int, ep: int, source_index: int, requ
         retry_headers = {
             "User-Agent": PLAYER_HEADERS["User-Agent"],
             "Accept": "*/*",
-            "Accept-Language": PLAYER_HEADERS["Accept-Language"],
-            "Referer": f"{domain}/",
+            "Accept-Encoding": "identity",
             "Origin": domain,
+            "Referer": f"{domain}/",
+            "Sec-Fetch-Dest": "video",
+            "Sec-Fetch-Mode": "cors",
+            "Sec-Fetch-Site": "cross-site",
         }
         if request.headers.get("range"):
             retry_headers["Range"] = request.headers["range"]
