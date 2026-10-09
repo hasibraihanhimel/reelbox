@@ -498,9 +498,24 @@ async def _get_player_data(subject_id: str, detail_path: str, se: int, ep: int) 
         )
         play_url = f"{domain}/wefeed-h5api-bff/subject/play?subjectId={subject_id}&se={se}&ep={ep}&detailPath={detail_path}"
         client = await _get_http_client()
-        resp = await client.get(play_url, headers={**PLAYER_HEADERS, "Referer": player_referer})
-        if resp.status_code != 200:
-            raise HTTPException(status_code=502, detail=f"Player API error: {resp.status_code}")
+        player_headers = {**PLAYER_HEADERS, "Referer": player_referer}
+        resp = None
+        transient_statuses = {408, 425, 429, 500, 502, 503, 504}
+        for attempt in range(5):
+            try:
+                resp = await client.get(play_url, headers=player_headers)
+            except httpx.HTTPError:
+                if attempt >= 4:
+                    raise HTTPException(status_code=502, detail="Player API connection failed after retries")
+                await asyncio.sleep(0.35 * (attempt + 1))
+                continue
+            if resp.status_code in transient_statuses and attempt < 4:
+                await asyncio.sleep(0.35 * (attempt + 1))
+                continue
+            break
+        if resp is None or resp.status_code != 200:
+            status = resp.status_code if resp is not None else "no response"
+            raise HTTPException(status_code=502, detail=f"Player API error after retries: {status}")
         data = resp.json().get("data", {})
         _player_cache[cache_key] = (asyncio.get_running_loop().time(), data)
         if len(_player_cache) > 128:
