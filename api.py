@@ -136,21 +136,33 @@ async def _make_request(url: str, method: str = "GET", payload: dict = None, cus
     }
     client = await _get_http_client()
     try:
-        if method == "POST":
-            resp = await client.post(url, headers=headers, json=payload)
-        else:
-            resp = await client.get(url, headers=headers)
-
-        # Refresh token if server sends a new one
-        x_user = resp.headers.get("x-user")
+        resp = None
+        transient_statuses = {408, 425, 429, 500, 502, 503, 504}
+        for attempt in range(3):
+            try:
+                if method == "POST":
+                    resp = await client.post(url, headers=headers, json=payload)
+                else:
+                    resp = await client.get(url, headers=headers)
+            except httpx.HTTPError:
+                if attempt >= 2:
+                    raise
+                await asyncio.sleep(0.35 * (attempt + 1))
+                continue
+            if resp.status_code in transient_statuses and attempt < 2:
+                await asyncio.sleep(0.35 * (attempt + 1))
+                continue
+            break
+        # Refresh token if server sends a new one.
+        x_user = resp.headers.get("x-user") if resp is not None else None
         if x_user:
             new_token = json.loads(x_user).get("token")
             if new_token:
                 _bearer_token = new_token
-
+        if resp is None:
+            raise HTTPException(status_code=502, detail="Upstream API returned no response")
         if resp.status_code != 200:
-            raise HTTPException(status_code=502, detail=f"Upstream API error: {resp.status_code}")
-
+            raise HTTPException(status_code=502, detail=f"Upstream API error after retries: {resp.status_code}")
         result = resp.json()
         if is_cacheable:
             _response_cache[cache_key] = (asyncio.get_running_loop().time(), result)
